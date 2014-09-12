@@ -5,15 +5,41 @@ usage of JioCloud's automated integration, testing, and deployment frameworks.
 
 ## What is CI/CD?
 
-CI/CD ( [continuous integration](http://en.wikipedia.org/wiki/Continuous_integration) and [continuos delivery](http://en.wikipedia.org/wiki/Continuous_delivery) ) are
+CI/CD ( [continuous integration](http://en.wikipedia.org/wiki/Continuous_integration) and [continuous delivery](http://en.wikipedia.org/wiki/Continuous_delivery) ) are
 practices through which changes to code repositories are automatically integrated,
-verified, and deployed (also called continuos deployment).
+verified, and deployed (also called continuous deployment).
 
 # Architecture Overview
 
-The CI/CD system consumes upstream patches and validates them through
-a series of steps in a build pipeline. Each step in the pipeline is intended
-to perform a set of testing tasks.
+The CI/CD system consumes upstream patches, runs their unit tests, and packages
+them as a single package repository snapshot that can be expressed by a single
+version.
+
+Once a new snapshot version exists, it is run through several independent steps
+of a build pipeline before being deployed into the production environment.
+
+A package repository snapshot version is applied against each step in a pipeline.
+Each step is only performed on a version once it has already passed all proceeding
+steps.
+
+NOTE: some steps may be run in parallel in order to reduce the total amount of time
+required to promote a change set through the pipeline, but for our current purposes,
+we will consider them to be in entirely in serial.
+
+The final pipeline will have the following stages:
+
+* Acceptance - quick tests that will provision out a full openstack environment using VMs
+  for faster turn-around.
+* Non-functional tests - Provisions openstack on VMs to validate non-functional requirements
+  (such as performance)
+* Performance tests - will run benchmarks against the previous and current version of the
+  cloud software.
+* Upgrade tests - Verifies that the code can upgrade from the previous version, resulting in
+  a functional environment.
+* Staging tests - Tests that are run in a staging environment that is intended to behave exactly
+  the same as the production environment.
+* Production deployments - once a snapshot version has been promoted through the previous stages,
+  it is ready to be deployed in production.
 
 ## Guiding Design principals
 
@@ -21,17 +47,17 @@ It's easier to understand many of the design decisions made for this project
 within the context of our guiding design principals.
 
 1. Automate everything - Humans make too many mistakes to have them perform
-   any manual repetitve tasks. Automating tasks also results in fewer mistakes
+   any manual repetitive tasks. Automating tasks also results in fewer mistakes
    and allows tasks to scale.
 
-2. No one should ever make any adhoc modification to our cloud systems. This
+2. No one should ever make any ad hoc modification to our cloud systems. This
    leads to risk that certain systems can wind up in an inconsistent state.
    Machines with inconsistent states are harder to debug at scale and invalidate
    our upgrade testing.
 
 3. Stay as close to master as possible - The closer you are to master, the
    less code you need to deploy to stay up-to-date. This should limit the
-   likelyhood that any changeset will lead to a failure.
+   likelihood that any change set will lead to a failure.
 
 4. Tests are the gateway for code getting deployed. We have to fully trust
    our automated tests in order to validate that our services are running
@@ -50,8 +76,10 @@ within the context of our guiding design principals.
 
 1. Package build server contains a configuration file that tells it
    what external package and code repositories it should be monitoring
-   for changes. When changes are detected, it build out new version of
-   the updated packages.
+   for changes. Jobs exist that pull in the current version of those
+   repositories and run their unit tests. Once the unit tests are validated,
+   the latest version of the set of external repositories is packaged
+   as a single versioned repository.
 
 2. Package versioning system periodically (every 15 minutes by default)
    monitors the package build server for updates. When updates are detected,
@@ -61,54 +89,71 @@ within the context of our guiding design principals.
 
 3. Jenkins monitors the package versioning system for updates. When updates are
    detected, it initializes a new jenkins job that pushes the latest package
-   snapshot version through a build pipeline..
+   snapshot version through the build pipeline.
 
 4. The initial job runs what we are calling acceptance tests. These tests
    create a set of virtual machines from scratch and configure them to install
    the desired set of packages. Once the build is verified, tests are run to
    ensure that it results in a functional environment.
 
-5. If this build is successful, it causes more builds to be launched that also
-   ensure that servers can be created using the specified snapshot version for:
-     * non-functional (performance regression testing)
-     * upgrade (verifies that we can upgrade from the
-     * staging (verifies that we can provision/upgrade a staging environment
-       on bare-metal.
-     * production - performs the actual production install/update
+5. If this build is successful, the next steps of the pipeline are executed on
+   the same snapshot version.
 
 ## Deployment process
 
-The above section focused on the high level overview of the build pipeline, but ommitted the
+The above section focused on the high level overview of the build pipeline, but omitted the
 details about what the actual environment deployment looks like.
 
+### Deployment script
 
-### Deployment inputs
-
-1. The revision of the package repositories to use
-
-All of the configuration detail as well as all packages that get the actual bits on
-disk are all stored in the package repository.
-
-2. The specification of what the end enviroment should look like
-
-A single file is used to express how many of each role should exist in the deployment.
-
-which are used to deploy and verify a set of systems.
-
+The same script that is used to provision and validated instances of openstack from jenkins
+is available in the [puppet-rjil repo](https://github.com/JioCloud/puppet-rjil/blob/master/build_scripts/deploy.sh).
+Specific details about how to use the script by hand for testing can be found in the project's
+[README](https://github.com/JioCloud/puppet-rjil/blob/master/README.md).
 
 ### Deployment Process
 
 1. The resource file is processed by jiocloud.apply\_resources and results in
-all machine required machine being provisioned.
+all machine required machine being provisioned. This resource file contains
+a specification of how many instances of what roles should exist.
 
 2. Each machine that does not already exist will be provisioned along with a
 specified userdata script responsible for:
 
 - installing Puppet
 - setting up repositories to the correct version
-- running a special Puppet class that is reponsible for install a pre-defined cron job.
+- running a special Puppet class that is responsible for installing a
+  pre-defined [cron job](https://github.com/JioCloud/puppet-rjil/blob/master/files/maybe-upgrade.sh).
 
-3. The desired version for all machines is published into etcd
+````
+puppet apply --debug -e "include rjil::jiocloud"
+````
+
+Currently, this userdata script is included inside of the [deploy.sh](https://github.com/JioCloud/puppet-rjil/blob/master/build_scripts/deploy.sh) file.
+
+3. The desired version for all machines is published into etcd using the command:
+
+In order to achieve this, the deployment script does the following:
+
+* gets the IP address of the etc instance:
+
+````
+python -m jiocloud.utils get\_ip\_of\_node etcd1
+````
+
+* triggers an update is required by specifying a version in etcd:
+
+````
+python -m jiocloud.orchestrate trigger\_update ${BUILD\_NUMBER}
+````
+
+* blocks until all hosts are ready
+
+* verifies that no hosts are in a failed state (and fails if this happens)
+
+NOTE: the code for this is not completed yet.
+
+* blocks until all hosts are reported as having a single version installed
 
 3. Each machine now has a running cron job that is responsible for managing the state of that machine.
    To do this, the cron job does the following:
@@ -125,15 +170,12 @@ specified userdata script responsible for:
 
 ## Packages
 
-Package are a central component to our design of CI/CD. All code changes
-that will be applied to the pipeline will be stored and configured as packages.
+Package are a central component to the design of this CI/CD system. All code changes
+that will be applied to the pipeline are stored and configured as packages.
 
-Packages allow us to keep track of all changes, and which specific components
-they effect. They also allow us to update only the specific bits of a system
-that we care about.
-
-Packages allow us to take advantage of upstream security fixes maintained
-by Canonical.
+Packages allow keeping track of all changes, and which specific components
+they effect. They also allow the update of only the specific bits of a system
+that need to be effected.
 
 ## Puppet
 
@@ -143,15 +185,24 @@ it's desired roles.
 For example, if a machine needed to be configured as a database, Puppet is
 responsible for the logic involved in converting a blank machine into this role.
 
+This class assignment is performed by encoding the desired role into a machines
+hostname and use Puppet's node expression to match those hostnames into roles.
+
+Puppet will also be used for configuring the jenkins instance using this (repo)[https://github.com/bodepd/puppet-openstack-gater]
+
 ## Openstack API
 
-The openstack API will be used for provisioing all virtual machines and
+The openstack API will be used for provisioning all virtual machines and
 bare-metal servers required for both test environment as well as production.
 
 ### Jenkins
 
 Jenkins is responsible for launching all jobs used as a part of the build
 pipeline.
+
+It is also responsible for querying upstream repositories for changes, firing off
+builds in response to those changes and setting up build steps that need to
+be executed serially as a pipeline.
 
 ## JioCloud python tools
 
@@ -170,7 +221,7 @@ desired provisioning specification.
 #### Apply Command
 
 The apply command is used to evaluate a specification for which
-servers/vms should be provisioned in order to fullfill a specification.
+servers/VMs should be provisioned in order to fulfill a specification.
 
 The command is as follows:
 
@@ -178,7 +229,7 @@ The command is as follows:
 python -m jiocloud.python apply <resource\_file> <userdata> [--project\tag tag]
 ````
 
-arguments:
+Arguments:
 
 * resource\_file
 
@@ -189,7 +240,9 @@ A file that list the specifications of the stack to be created.
 The delete command is used to delete specific VMs/servers related to a specific
 stack.
 
-###
+### list
+
+Given a project tag and a resource file, lists the specified servers.
 
 ## Installation and Updates
 
@@ -200,7 +253,7 @@ with the existing openstack-infra project.
 ## Developing on CI/CD framework
 
 It is recommended that you test all changes for the CI/CD framework
-locally to avoid the likelyhood of pushing code that may disrupt the
+locally to avoid the likelihood of pushing code that may disrupt the
 function of the CI/CD system.
 
 ## CI/CD components
