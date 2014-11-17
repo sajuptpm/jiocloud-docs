@@ -72,6 +72,21 @@ within the context of our guiding design principals.
 
 6. Make the deployments as similar as possible for each environment.
 
+## buld process
+
+There is one jenkins system (rusted halo) that does the folowing:
+  - monitors openstack changes for updates
+  - runs unit tests
+  - builds source package (runs unit tests again)
+  - updates rustedhalo repo
+
+There is an internal jenkins repo that does the following:
+  - monitors multiple package sources to mirror (ubuntu, ceph, puppetlabs)
+  - runs every 30 minutes and runs refresh mirror
+  - builds a new snapshot
+
+
+
 ## End to End process:
 
 1. Package build server contains a configuration file that tells it
