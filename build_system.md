@@ -11,9 +11,9 @@ verified, and deployed (also called continuous deployment).
 
 # Architecture Overview
 
-The CI/CD system consumes upstream patches, runs their unit tests, and packages
-them as a single package repository snapshot that can be expressed by a single
-version.
+The CI/CD system consumes upstream patches, runs their unit tests, rebase local
+changes (if they exist), reruns unit tests and then packages them as a single
+package repository snapshot that can be expressed by a single version.
 
 Once a new snapshot version exists, it is run through several independent steps
 of a build pipeline before being deployed into the production environment.
@@ -28,18 +28,21 @@ we will consider them to be in entirely in serial.
 
 The final pipeline will have the following stages:
 
-* Acceptance - quick tests that will provision out a full openstack environment using VMs
-  for faster turn-around.
+* Acceptance - Provision out a full openstack environment using VMs against an existing
+openstack environment.
+* Staging tests - Tests that are run in a staging environment that is intended to behave exactly
+  the same as the production environment. These tests are applied as upgrades and not built from
+  scratch.
+* Production deployments - once a snapshot version has been promoted through the previous stages,
+  it is ready to be deployed in production.
+
+The following stages are intended to be added before staging, but have not been implemented:
 * Non-functional tests - Provisions openstack on VMs to validate non-functional requirements
   (such as performance)
 * Performance tests - will run benchmarks against the previous and current version of the
   cloud software.
 * Upgrade tests - Verifies that the code can upgrade from the previous version, resulting in
   a functional environment.
-* Staging tests - Tests that are run in a staging environment that is intended to behave exactly
-  the same as the production environment.
-* Production deployments - once a snapshot version has been promoted through the previous stages,
-  it is ready to be deployed in production.
 
 ## Guiding Design principals
 
@@ -50,7 +53,7 @@ within the context of our guiding design principals.
    any manual repetitive tasks. Automating tasks also results in fewer mistakes
    and allows tasks to scale.
 
-2. No one should ever make any ad hoc modification to our cloud systems. This
+2. No one should ever make any adhoc modification to our cloud systems. This
    leads to risk that certain systems can wind up in an inconsistent state.
    Machines with inconsistent states are harder to debug at scale and invalidate
    our upgrade testing.
@@ -72,7 +75,10 @@ within the context of our guiding design principals.
 
 6. Make the deployments as similar as possible for each environment.
 
-## buld process
+## Package build process
+
+NOTE: this part of the document is not as up-to-date as other parts
+and needs more information about the exact details.
 
 There is one jenkins system (rusted halo) that does the folowing:
   - monitors openstack changes for updates
@@ -85,9 +91,8 @@ There is an internal jenkins repo that does the following:
   - runs every 30 minutes and runs refresh mirror
   - builds a new snapshot
 
-
-
 ## End to End process:
+
 
 1. Package build server contains a configuration file that tells it
    what external package and code repositories it should be monitoring
@@ -96,7 +101,7 @@ There is an internal jenkins repo that does the following:
    the latest version of the set of external repositories is packaged
    as a single versioned repository.
 
-2. Package versioning system periodically (every 15 minutes by default)
+2. Package versioning system periodically (every 30 minutes by default)
    monitors the package build server for updates. When updates are detected,
    it builds a new version (snapshot) that represents the latest version of
    all packages (NOTE: snapshots are time based (not patch based) and may
@@ -116,19 +121,38 @@ There is an internal jenkins repo that does the following:
 
 ## Deployment process
 
-The above section focused on the high level overview of the build pipeline, but omitted the
-details about what the actual environment deployment looks like.
+The deployment process includes everything that is required to either bootstrap or upgrade
+a functional application from scratch (with the emphasis of this document being Openstack)
+
+This section is focused on the process of how jenkins creates or updates Openstack clusters.
 
 ### Deployment script
 
-The same script that is used to provision and validated instances of openstack from jenkins
-is available in the [puppet-rjil repo](https://github.com/JioCloud/puppet-rjil/blob/master/build_scripts/deploy.sh).
-Specific details about how to use the script by hand for testing can be found in the project's
-[README](https://github.com/JioCloud/puppet-rjil/blob/master/README.md).
+The following script from the puppet-rjil repo is called from jenkins to either provision or
+update openstack environments: [puppet-rjil repo](https://github.com/JioCloud/puppet-rjil/blob/master/build_scripts/deploy.sh).
+
+Although this script is usually invoked from jenkins, documentation for how to invoke it by
+hand can be found in the project's [README](https://github.com/JioCloud/puppet-rjil/blob/master/README.md).
 
 ### Deployment Process
 
-1. The resource file is processed by jiocloud.apply\_resources and results in
+The deployment script acts upon a configuration file that provides it with a description of
+the application stack that should be deployed.
+
+It has the following steps:
+
+1. create desired machines with specified roles
+2. specify the desired version that will drive the configuration of those machines.
+3. block until all machines have been configured and validated as having the correct role.
+
+#### Provisioning machines
+
+The [file](https://githubcom/JioCloud/puppet-rjil/blob/master/environment/full.yaml) is used
+to describe a full Openstack environment. This file describes all information related to machines
+that need to be created for an environment.
+
+1. The resource file is processed by jiocloud.apply\_resources (from the
+[python-jiocloud repository](https://github.com/jiocloud/python-jiocloud)) and results in
 all machine required machine being provisioned. This resource file contains
 a specification of how many instances of what roles should exist.
 
