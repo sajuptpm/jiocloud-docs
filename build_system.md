@@ -91,6 +91,31 @@ There is an internal jenkins repo that does the following:
   - runs every 30 minutes and runs refresh mirror
   - builds a new snapshot
 
+### Automated package build process step-by-step
+
+We have two public github repositories for the automated package build:
+Jiocloud/repoconf - Sets build configuration
+JioCloud/autobuild - Does actual package build (on Jenkins)
+
+repoconf:
+default.xml contains details of every repository we track for package build. It also specifies other parameters like revision, sync, #threads etc.
+
+autobuild:
+1. control file: 
+Defines the different packages that need to be built as part of autobuild process and their dependencies. Also specifies overall dependencies in “Build-depends” and “Standards-Version” at top.
+
+The first package is the monolithic package that combines all openstack components.
+“Architecture: all” - specifies package as machine architecture independent (intel/arm etc.)
+
+2. rules file
+Includes the commands and logic for build process.
+Essentially specifies how clean/build/install will be run.
+
+3. sync-repo.sh
+Does the actual source package build. 
+
+Next step after building source package is done in Jenkins. Jenkins will build a binary (.deb) package out of this source package. jenkins-jobs/jobs.yaml has this job description under job: repoconf. Jenkins publishes a binary package and pushes it to the relevant distribution being tested (in current case “trusty”). After the packages are put into the distribution/environment, the CI/CD pipeline can be executed (acceptances tests>staging>production).
+
 ## End to End process:
 
 
