@@ -81,40 +81,45 @@ NOTE: this part of the document is not as up-to-date as other parts
 and needs more information about the exact details.
 
 There is one jenkins system (rusted halo) that does the folowing:
-  - monitors openstack changes for updates
-  - runs unit tests
-  - builds source package (runs unit tests again)
-  - updates rustedhalo repo
+
+- monitors openstack changes for updates
+- runs unit tests
+- builds source package (runs unit tests again)
+- updates rustedhalo repo
 
 There is an internal jenkins repo that does the following:
-  - monitors multiple package sources to mirror (ubuntu, ceph, puppetlabs)
-  - runs every 30 minutes and runs refresh mirror
-  - builds a new snapshot
+
+- monitors multiple package sources to mirror (ubuntu, ceph, puppetlabs)
+- runs every 30 minutes and runs refresh mirror
+- builds a new snapshot
+
 
 ### Automated package build process step-by-step
 
 We have two public github repositories for the automated package build:
-Jiocloud/repoconf - Sets build configuration
-JioCloud/autobuild - Does actual package build (on Jenkins)
+
+- [Jiocloud/repoconf](https://github.com/JioCloud/repoconf) - Sets build configuration
+- [JioCloud/autobuild](https://github.com/JioCloud/autobuild) - Does actual package build (on Jenkins)
 
 repoconf:
-default.xml contains details of every repository we track for package build. It also specifies other parameters like revision, sync, #threads etc.
+
+- default.xml: contains details of every repository we track for package build. It also specifies other parameters like revision, sync, #threads etc.
 
 autobuild:
-1. control file: 
-Defines the different packages that need to be built as part of autobuild process and their dependencies. Also specifies overall dependencies in “Build-depends” and “Standards-Version” at top.
 
-The first package is the monolithic package that combines all openstack components.
-“Architecture: all” - specifies package as machine architecture independent (intel/arm etc.)
+- control file: Defines the different packages that need to be built as part of autobuild process and their dependencies.  Also specifies overall dependencies in “Build-depends” and “Standards-Version” on top.  
+Sidenotes:
+    - The first package is the monolithic package that combines all openstack components.
+    - “Architecture: all” in the control file code specifies whether package is machine architecture independent or not (intel/arm etc.)
+- rules file: Includes the commands and logic for build process. Essentially specifies how clean/build/install will be run.
+- sync-repo.sh: Does the actual source package build. 
 
-2. rules file
-Includes the commands and logic for build process.
-Essentially specifies how clean/build/install will be run.
+After building source package, next steps are completed in Jenkins.
 
-3. sync-repo.sh
-Does the actual source package build. 
+- Jenkins will build a binary (.deb) package out of this source package. jenkins-jobs/jobs.yaml has this job description under job: repoconf. 
+- Jenkins publishes a binary package and pushes it to the relevant distribution being tested (in current case “trusty”). 
+- After the packages are put into the distribution/environment, the CI/CD pipeline can be executed (acceptances tests>staging>production).
 
-Next step after building source package is done in Jenkins. Jenkins will build a binary (.deb) package out of this source package. jenkins-jobs/jobs.yaml has this job description under job: repoconf. Jenkins publishes a binary package and pushes it to the relevant distribution being tested (in current case “trusty”). After the packages are put into the distribution/environment, the CI/CD pipeline can be executed (acceptances tests>staging>production).
 
 ## End to End process:
 
